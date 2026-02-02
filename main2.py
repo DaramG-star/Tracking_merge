@@ -5,7 +5,6 @@ Run from track/ directory: python main2.py [--csv] [--video] [--display]
 """
 import argparse
 import csv
-import json
 import os
 import signal
 import sys
@@ -141,31 +140,37 @@ def main():
 
     try:
         while _running:
-            # 4개 카메라를 순회하며 개별적으로 프레임이 있는지 확인
             for cam in config.TRACKING_CAMS:
                 pair = frame_sink.get(cam)
                 if pair is None: continue
                 
                 img, ts = pair
-                # 이미 처리한 타임스탬프거나 너무 짧은 간격이면 스킵 (중복 처리 방지)
-                print(f"[{cam}] Resolution: {img.shape[1]}x{img.shape[0]}")
                 if ts <= last_processed_ts[cam] or (ts - last_processed_ts[cam]) < target_interval * 0.8:
                     continue
                 
                 last_processed_ts[cam] = ts
                 
-                # 1. Detection
                 cfg = config.CAM_SETTINGS.get(cam)
                 if not cfg: continue
+
+                # 이미지 회전
+                rotate_val = cfg.get("rotate", 0)
+                if rotate_val == 90:
+                    img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+                elif rotate_val == 180:
+                    img = cv2.rotate(img, cv2.ROTATE_180)
+                elif rotate_val == 270:
+                    img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+                print(f"[{cam}] Resolution: {img.shape[1]}x{img.shape[0]}")
+                
                 detections = detector.get_detections(img, cfg, cam)
                 
-                # 2. Tracking & Matching (즉시 실행)
                 new_active = {}
                 for det in detections:
                     cx, cy = det["center"]
                     x1, y1, x2, y2 = det["box"]
                     
-                    # 기존 Local Track 찾기
                     best_uid, best_score = None, 1e9
                     for uid, info in active_tracks[cam].items():
                         dx = abs(cx - info["last_pos"][0])
@@ -181,7 +186,6 @@ def main():
                     if best_uid:
                         mid = active_tracks[cam][best_uid]["master_id"]
                     else:
-                        # 신규 진입 물체 매칭 시도
                         local_uid_counter[cam] += 1
                         best_uid = f"{cam}_{local_uid_counter[cam]:03d}"
                         match_cam = "RPI_USB3_EOL" if det.get("in_eol") else cam
@@ -191,7 +195,6 @@ def main():
                     if mid:
                         new_active[best_uid] = {"last_pos": (cx, cy), "master_id": mid}
                         
-                        # Position API 계산
                         total_dist = config.ROUTE_TOTAL_DIST.get(matcher.masters[mid]["route_code"], 12.8)
                         elapsed = ts - matcher.masters[mid]["start_time"]
                         rem_dist = max(0.0, total_dist - (elapsed * config.BELT_SPEED))
@@ -203,10 +206,18 @@ def main():
                             if crop.size > 0:
                                 save_thumbnail_to_nfs(mid, crop)
                         
-                        # 위치 정보 전송 (모든 카메라 공통)
                         api_helper.api_update_position(mid, step_dist)
 
-                # 3. Pending & Resolve (사라진 물체 처리)
+                    # CSV 로그 기록 시 event_type 변수 사용
+                    if args.csv and csv_writer:
+                        csv_writer.writerow({
+                            "timestamp": ts,
+                            "cam": cam,
+                            "local_uid": best_uid,
+                            "master_id": mid if mid else "",
+                            "event": event_type
+                        })
+
                 for old_uid, old_info in active_tracks[cam].items():
                     if old_uid not in new_active:
                         mid = old_info["master_id"]
@@ -214,7 +225,6 @@ def main():
                             matcher.masters[mid]["status"] = "PENDING"
                             matcher.masters[mid]["pending_from_cam"] = cam
 
-                # Pending 해소 시도
                 for mid in list(matcher.masters.keys()):
                     result = matcher.resolve_pending(mid, ts)
                     if result:
@@ -223,7 +233,6 @@ def main():
 
                 active_tracks[cam] = new_active
 
-                # 시각화 (옵션)
                 if args.display:
                     cv2.imshow(f"track_{cam}", img)
                     if cv2.waitKey(1) & 0xFF == ord('q'): _running = False
