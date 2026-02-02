@@ -273,12 +273,31 @@ def main():
                     if mid is not None:
                         new_active[best_uid] = {"last_pos": (cx, cy), "master_id": mid}
                         
-                        # 거리 수정 로직 적용
-                        cam_pos = config.CAM_SETTINGS[cam].get("dist", 0.0) 
-                        total_route_dist = config.ROUTE_TOTAL_DIST.get(matcher.masters[mid]["route_code"], 12.8)
-                        rem_dist = max(0.0, total_route_dist - cam_pos)
-                        step_dist = round(rem_dist / 0.5) * 0.5
+                        # # 거리 수정 로직 적용
+                        # cam_pos = config.CAM_SETTINGS[cam].get("dist", 0.0) 
+                        # total_route_dist = config.ROUTE_TOTAL_DIST.get(matcher.masters[mid]["route_code"], 12.8)
+                        # rem_dist = max(0.0, total_route_dist - cam_pos)
+                        # step_dist = round(rem_dist / 0.5) * 0.5
                         
+                        m_info = matcher.masters[mid]
+                        if m_info.get("start_time") is not None:
+                            # 1. 해당 경로의 전체 거리 가져오기 (기본값 12.8m)
+                            total_dist = config.ROUTE_TOTAL_DIST.get(m_info["route_code"], 12.8)
+                            
+                            # 2. 현재 시간(ts_today)과 시작 시간 차이 계산
+                            elapsed_time = ts_today - m_info["start_time"]
+                            
+                            # 3. 잔여 거리 계산: 전체 거리 - (경과 시간 * 벨트 속도)
+                            rem_dist = max(0.0, total_dist - (elapsed_time * config.BELT_SPEED))
+                            
+                            # 4. 0.5m 단위로 절삭(Rounding)
+                            step_dist = round(rem_dist / 0.5) * 0.5
+                            
+                            # 5. 값이 변했을 때만 API 호출 (중복 호출 방지)
+                            if m_info.get("last_sent_dist") != step_dist:
+                                api_helper.api_update_position(mid, step_dist, thumbnail_image=None)
+                                m_info["last_sent_dist"] = step_dist
+
                         if cam == "USB_LOCAL":
                             crop = img[max(0, y1):min(H, y2), max(0, x1):min(W, x2)]
                             if crop.size > 0:

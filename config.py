@@ -11,8 +11,6 @@ MODEL_PATH = TRACK_ROOT / "parcel_ver0123.pt"
 BASE_DIR = TRACK_ROOT / "0127Tracking"  # 파일 기반 로더용 (선택)
 
 # YOLO 추론 입력 크기 (Ultralytics). 정수 하나면 정사각형: 모델 입력 = imgsz × imgsz (letterbox)
-# 캡처 해상도(예: 960×570, 1280×720)는 비율 유지한 채 640×640 안에 맞춰 스케일되고, 남는 부분 패딩.
-# 기본 640 → 실제 모델 입력은 640×640.
 YOLO_IMGSZ = 640
 OUT_DIR = TRACK_ROOT / "output" / "Parcel_Integration_Log_FIFO"
 VIDEO_DIR = OUT_DIR / "videos"
@@ -46,7 +44,7 @@ STREAM_USE_LZ4 = True
 # Tracking (카메라별 ROI, 이동 시간, 매칭)
 # -----------------------------------------------------------------------------
 CAM_SETTINGS = {
-    "Scanner": {"dist": -2.3},
+    "Scanner": {"dist": 0},
     "USB_LOCAL": {
         "rotate": 90,
         "roi_y_rate": 0.586,     
@@ -56,7 +54,7 @@ CAM_SETTINGS = {
         "dist_eps_rate": 0.047,   
         "max_dy_rate": 0.094,     
         "forward_sign": -1,
-        "dist": 0.0
+        "dist": 2.3
     },
     "RPI_USB1": {
         "rotate": 270,
@@ -67,7 +65,7 @@ CAM_SETTINGS = {
         "dist_eps_rate": 0.036,   
         "max_dy_rate": 0.083,     
         "forward_sign": 1,
-        "dist": 5.88
+        "dist": 8.18
     },
     "RPI_USB2": {
         "rotate": 270,
@@ -78,7 +76,7 @@ CAM_SETTINGS = {
         "dist_eps_rate": 0.036,
         "max_dy_rate": 0.083,
         "forward_sign": -1,
-        "dist": 9.47
+        "dist": 11.77
     },
     "RPI_USB3": {
         "rotate": 270,
@@ -91,7 +89,7 @@ CAM_SETTINGS = {
         "dist_eps_rate": 0.036,
         "max_dy_rate": 0.083,
         "forward_sign": 1,
-        "dist": 12.8
+        "dist": 15.1
     }
 }
 
@@ -112,7 +110,7 @@ TIME_MARGIN = {
 }
 
 BELT_SPEED = 0.366  # m/s
-ROUTE_TOTAL_DIST = {"XSEA": 9.47, "XSEB": 12.8}
+ROUTE_TOTAL_DIST = {"XSEA": 11.77, "XSEB": 15.1}
 
 # ZMQ (rpi_id, topic) / local:camera_name -> Tracking cam_id
 ZMQ_CAM_MAPPING = {
