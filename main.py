@@ -217,6 +217,7 @@ def main():
 
     def _process_with_detections(cam, img, ts, time_s, detections, thumbnail_crops=None):
         """detection 결과를 받아 matching, pending, resolve, position API, video/display만 수행."""
+        global cv2
         cfg = config.CAM_SETTINGS.get(cam)
         if not cfg:
             return
@@ -346,7 +347,6 @@ def main():
             atracks[cam] = new_active
             visualizer.draw_and_write(cam, img, detections, matcher.masters, ts, atracks)
         if args.display:
-            import cv2
             cv2.imshow(f"track_{cam}", img)
         active_tracks[cam] = new_active
 
@@ -529,7 +529,6 @@ def main():
                     process_one_frame(cam, img, ts, time_s)
 
             if args.display:
-                import cv2
                 signal.signal(signal.SIGINT, shutdown)
                 signal.signal(signal.SIGTERM, shutdown)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -558,7 +557,6 @@ def main():
         if processing_times_log_file:
             processing_times_log_file.close()
         if args.display:
-            import cv2
             cv2.destroyAllWindows()
         ctx.term()
 
