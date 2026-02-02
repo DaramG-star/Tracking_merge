@@ -15,6 +15,7 @@ class YOLODetector:
         self.model = YOLO(str(path))
 
     def get_detections(self, img, cam_cfg, cam_id):
+
         # 1. YOLO 추론 실행 (이미지는 main에서 이미 회전/리사이징됨)
         results = self.model(img, conf=0.25, iou=0.45, verbose=False)[0]
 
