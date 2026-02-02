@@ -96,11 +96,11 @@ AVG_TRAVEL = {
 }
 
 TIME_MARGIN = {
-    ("Scanner", "USB_LOCAL"): 3.0,
-    ("USB_LOCAL", "RPI_USB1"): 1.0,
-    ("RPI_USB1", "RPI_USB2"): 1.0,
-    ("RPI_USB2", "RPI_USB3"): 1.2,
-    ("RPI_USB3", "RPI_USB3_EOL"): 1.5
+    ("Scanner", "USB_LOCAL"): 8.0,
+    ("USB_LOCAL", "RPI_USB1"): 7.0,
+    ("RPI_USB1", "RPI_USB2"): 7.0,
+    ("RPI_USB2", "RPI_USB3"): 2.0,
+    ("RPI_USB3", "RPI_USB3_EOL"): 2.0
 }
 
 BELT_SPEED = 0.366  # m/s
