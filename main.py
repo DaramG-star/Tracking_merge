@@ -10,6 +10,7 @@ import os
 import signal
 import sys
 import time
+import cv2
 from pathlib import Path
 
 # 4개 카메라 짝 맞춤 로그: timestamp 범위 이하면 COMPLETE, 초과면 SPREAD (초 단위)
@@ -215,12 +216,19 @@ def main():
         _process_with_detections(cam, img, ts, time_s, detections)
 
     def _process_with_detections(cam, img, ts, time_s, detections, thumbnail_crops=None):
-        """detection 결과를 받아 matching, pending, resolve, position API, video/display만 수행.
-        thumbnail_crops: mid -> crop 이미지 (NFS 저장용). 있으면 api_update_position 시 /mnt/thumbnails/{uid}.jpg 저장.
-        """
+        """detection 결과를 받아 matching, pending, resolve, position API, video/display만 수행."""
         cfg = config.CAM_SETTINGS.get(cam)
         if not cfg:
             return
+        
+        rotate_val = cfg.get("rotate", 0)
+        if rotate_val == 90:
+            img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        elif rotate_val == 180:
+            img = cv2.rotate(img, cv2.ROTATE_180)
+        elif rotate_val == 270:
+            img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
         new_active = {}
         if thumbnail_crops is None:
             thumbnail_crops = {}

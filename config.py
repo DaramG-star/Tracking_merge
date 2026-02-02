@@ -48,6 +48,7 @@ STREAM_USE_LZ4 = True
 CAM_SETTINGS = {
     "Scanner": {"dist": -2.3},
     "USB_LOCAL": {
+        "rotate": 0,
         "roi_y": 750, "roi_margin": 100,
         "dist_eps": 60, "max_dy": 120,
         "forward_sign": -1,
@@ -55,6 +56,7 @@ CAM_SETTINGS = {
         "parts": [("081952_961", "082029_085")]
     },
     "RPI_USB1": {
+        "rotate": 0,
         "roi_y": 400, "roi_margin": 30,
         "dist_eps": 35, "max_dy": 80,
         "forward_sign": 1,
@@ -62,6 +64,7 @@ CAM_SETTINGS = {
         "parts": [("082008_660", "082046_675")]
     },
     "RPI_USB2": {
+        "rotate": 0,
         "roi_y": 160, "roi_margin": 30,
         "dist_eps": 35, "max_dy": 80,
         "forward_sign": -1,
@@ -69,6 +72,7 @@ CAM_SETTINGS = {
         "parts": [("082018_216", "082054_026")]
     },
     "RPI_USB3": {
+        "rotate": 0,
         "roi_y": 400, "roi_margin": 40,
         "eol_y": 690, "eol_margin": 30,
         "dist_eps": 35, "max_dy": 80,
