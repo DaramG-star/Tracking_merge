@@ -148,6 +148,7 @@ def main():
                 
                 img, ts = pair
                 # 이미 처리한 타임스탬프거나 너무 짧은 간격이면 스킵 (중복 처리 방지)
+                print(f"[{cam}] Resolution: {img.shape[1]}x{img.shape[0]}")
                 if ts <= last_processed_ts[cam] or (ts - last_processed_ts[cam]) < target_interval * 0.8:
                     continue
                 
