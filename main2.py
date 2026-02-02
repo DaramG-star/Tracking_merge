@@ -147,10 +147,8 @@ def main():
 
                 import datetime
                 dt = datetime.datetime.fromtimestamp(ts)
-                # 시*3600 + 분*60 + 초 + 마이크로초
                 ts_today = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1000000.0
             
-                
                 cfg = config.CAM_SETTINGS.get(cam)
                 if not cfg: continue
 
@@ -170,12 +168,11 @@ def main():
                 target_h = int(h_orig * scale)
                 img = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
-                # 3. 해상도 기반 비율 픽셀 계산 (가로/세로 전체 반영)
+                # 3. 해상도 기반 비율 픽셀 계산
                 H, W = img.shape[:2]
                 cfg['roi_y'] = int(H * cfg.get('roi_y_rate', 0))
                 cfg['roi_margin'] = int(H * cfg.get('roi_margin_rate', 0))
                 
-                # 가로 제한 계산 (정중앙 기준 좌우 폭 설정)
                 x_center = int(W * cfg.get('roi_x_center_rate', 0.5))
                 x_half_range = int(W * cfg.get('roi_x_range_rate', 1.0) / 2)
                 cfg['roi_x_min'] = x_center - x_half_range
@@ -187,28 +184,16 @@ def main():
                     cfg['eol_y'] = int(H * cfg['eol_y_rate'])
                     cfg['eol_margin'] = int(H * cfg['eol_margin_rate'])
 
-                # 4. ROI 가이드라인 시각화 (display 옵션 시)
+                # 4. ROI 가이드라인 시각화
                 if args.display:
-                    # 베이스 오버레이 생성 (투명 작업용)
                     overlay = img.copy()
-                    
-                    # 1) 가로 제한 영역 시각화 (좌우를 어둡게)
                     cv2.rectangle(overlay, (0, 0), (cfg['roi_x_min'], H), (0, 0, 0), -1)
                     cv2.rectangle(overlay, (cfg['roi_x_max'], 0), (W, H), (0, 0, 0), -1)
-                    
-                    # 2) 세로 ROI 마진 영역 시각화 (중앙 반투명 빨간색)
                     y_min = max(0, cfg['roi_y'] - cfg['roi_margin'])
                     y_max = min(H, cfg['roi_y'] + cfg['roi_margin'])
-                    # 가로 범위(roi_x_min ~ roi_x_max) 안에서만 빨간색으로 표시
                     cv2.rectangle(overlay, (cfg['roi_x_min'], y_min), (cfg['roi_x_max'], y_max), (0, 0, 255), -1)
-                    
-                    # 오버레이 합성 (가로 어두운 부분과 빨간색 마진 동시 적용)
                     cv2.addWeighted(overlay, 0.3, img, 0.7, 0, img)
-                    
-                    # 3) ROI 메인 라인 (노란색 선)
                     cv2.line(img, (cfg['roi_x_min'], cfg['roi_y']), (cfg['roi_x_max'], cfg['roi_y']), (0, 255, 255), 2)
-                    
-                    # EOL 라인이 있는 경우 (보라색 선)
                     if 'eol_y' in cfg:
                         cv2.line(img, (cfg['roi_x_min'], cfg['eol_y']), (cfg['roi_x_max'], cfg['eol_y']), (255, 0, 255), 2)
 
@@ -217,85 +202,81 @@ def main():
                 detections = detector.get_detections(img, cfg, cam)
                 inf_dt = time.perf_counter() - inf_t0
                 
-                # # [디버깅 로그]
-                # if len(detections) > 0:
-                #     print(f"[{cam}] Found {len(detections)} boxes. Inf: {inf_dt:.3f}s")
-                
                 new_active = {}
                 for det in detections:
                     cx, cy = det["center"]
                     x1, y1, x2, y2 = det["box"]
 
-                    # 1. 가로(X) 범위 체크 (기본 필터)
+                    # NameError 방지를 위한 초기화
+                    mid = None
+                    best_uid = None
+                    event_type = "TRACKING"
+
+                    # 1. 가로(X) 범위 체크
                     in_x_range = (cfg['roi_x_min'] <= cx <= cfg['roi_x_max'])
-                    
                     if not in_x_range:
                         if args.display:
                             cv2.rectangle(img, (x1, y1), (x2, y2), (150, 150, 150), 1)
                         continue
 
-                    # 2. 세로(Y) ROI 통과 여부 체크 (라인 근처인지 확인)
-                    # 물체 중심(cy)이 roi_y 기준 roi_margin 이내에 있는지 확인
+                    # 2. 세로(Y) ROI 통과 여부 체크
                     in_y_roi = abs(cy - cfg['roi_y']) <= cfg['roi_margin']
 
-                    best_uid, best_score = None, 1e9
+                    # 기존 추적 확인
+                    current_best_uid, best_score = None, 1e9
                     for uid, info in active_tracks[cam].items():
                         dx = abs(cx - info["last_pos"][0])
                         dy = (cy - info["last_pos"][1]) * cfg["forward_sign"]
                         if dx > cfg["dist_eps"] or dy < -5 or dy > cfg["max_dy"]: continue
                         score = dx + dy * 0.3
                         if score < best_score:
-                            best_uid, best_score = uid, score
+                            current_best_uid, best_score = uid, score
 
-                    mid = None
-                    event_type = "TRACKING"
-                    
-                    if best_uid:
-                        # 이미 추적 중인 물체는 기존 ID 유지
+                    if current_best_uid:
+                        best_uid = current_best_uid
                         mid = active_tracks[cam][best_uid]["master_id"]
+                    elif in_y_roi:
+                        local_uid_counter[cam] += 1
+                        best_uid = f"{cam}_{local_uid_counter[cam]:03d}"
+                        match_cam = "RPI_USB3_EOL" if det.get("in_eol") else cam
+                        
+                        match_result = matcher.try_match(match_cam, ts_today, det["width"], best_uid)
+                        mid = match_result.get("mid")
+                        event_type = "MATCHED" if mid else "UNMATCHED"
+                        
+                        if args.csv and csv_writer:
+                            log_row = {
+                                "timestamp": ts_today,
+                                "cam": cam,
+                                "local_uid": best_uid,
+                                "master_id": mid if mid else "",
+                                "event": event_type,
+                                "reason": match_result.get("reason", ""),
+                                "prev_cam": match_result.get("prev_cam", ""),
+                                "prev_time": match_result.get("prev_time", ""),
+                                "expected_time": match_result.get("expected_time", ""),
+                                "diff": match_result.get("diff", ""),
+                                "margin": match_result.get("margin", "")
+                            }
+                            csv_writer.writerow(log_row)
                     else:
-                        # 새로운 물체 발견 시: ROI 라인 근처(in_y_roi)일 때만 매칭 시도
-                        if in_y_roi:
-                            local_uid_counter[cam] += 1
-                            best_uid = f"{cam}_{local_uid_counter[cam]:03d}"
-                            match_cam = "RPI_USB3_EOL" if det.get("in_eol") else cam
-                            
-                            # 1. 이제 try_match는 결과 딕셔너리를 반환합니다.
-                            match_result = matcher.try_match(match_cam, ts_today, det["width"], best_uid)
-                            mid = match_result["mid"]
-                            event_type = "MATCHED" if mid else "UNMATCHED"
-                            
-                            # 2. CSV 기록 시 상세 정보 포함
-                            if args.csv and csv_writer:
-                                log_row = {
-                                    "timestamp": ts_today,
-                                    "cam": cam,
-                                    "local_uid": best_uid,
-                                    "master_id": mid if mid else "",
-                                    "event": event_type,
-                                    "reason": match_result.get("reason", ""),
-                                    "prev_cam": match_result.get("prev_cam", ""),
-                                    "prev_time": match_result.get("prev_time", ""),
-                                    "expected_time": match_result.get("expected_time", ""),
-                                    "diff": match_result.get("diff", ""),
-                                    "margin": match_result.get("margin", "")
-                                }
-                                csv_writer.writerow(log_row)
-                        else:
-                            continue
+                        continue
 
-                    # 상태별 시각화 (매칭 성공: 초록, 실패: 빨강)
-                    if args.display:
+                    # 상태별 시각화
+                    if args.display and best_uid:
                         color = (0, 255, 0) if mid else (0, 0, 255)
                         cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
                         label = f"ID: {mid}" if mid else "UNMATCHED"
                         cv2.putText(img, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
-                    if mid:
+                    # 매칭된 경우 후속 작업 (거리 보고 등)
+                    if mid is not None:
                         new_active[best_uid] = {"last_pos": (cx, cy), "master_id": mid}
-                        total_dist = config.ROUTE_TOTAL_DIST.get(matcher.masters[mid]["route_code"], 12.8)
-                        elapsed = ts_today - matcher.masters[mid]["start_time"]
-                        rem_dist = max(0.0, total_dist - (elapsed * config.BELT_SPEED))
+                        
+                        # 거리 수정 로직 적용
+                        cam_pos = config.CAM_SETTINGS[cam].get("dist", 0.0) 
+                        total_route_dist = config.ROUTE_TOTAL_DIST.get(matcher.masters[mid]["route_code"], 12.8)
+                        rem_dist = max(0.0, total_route_dist - cam_pos)
                         step_dist = round(rem_dist / 0.5) * 0.5
                         
                         if cam == "USB_LOCAL":
@@ -305,9 +286,10 @@ def main():
                         
                         api_helper.api_update_position(mid, step_dist, thumbnail_image=None)
 
-                    if args.csv and csv_writer:
+                    # CSV 로그 (모든 감지 건에 대해 기록)
+                    if args.csv and csv_writer and best_uid:
                         csv_writer.writerow({
-                            "timestamp": ts_today,  # 변환하지 않은 원본 float 값 기록
+                            "timestamp": ts_today,
                             "cam": cam, 
                             "local_uid": best_uid,
                             "master_id": mid if mid else "", 

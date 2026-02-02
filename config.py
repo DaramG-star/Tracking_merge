@@ -140,7 +140,7 @@ USE_TIME_ORDERED_BUFFER = True
 # 시간순 버퍼당 카메라별 최대 프레임 수
 TIME_ORDERED_BUFFER_MAXLEN = 60
 # PENDING 해제 시 추가 대기 시간(초). expected += 이 값 후 now_s >= expected 일 때만 DISAPPEAR.
-PENDING_EXTRA_MARGIN_SEC = 10
+PENDING_EXTRA_MARGIN_SEC = 0
 # 프레임 ts가 현재 시각보다 이 값(초) 이상 과거면 resolve_pending 호출 생략 (stale frame).
 STALE_FRAME_SEC = 30
 # now_s가 "모든 카메라의 최근 소비 ts 중 최소값"보다 이 값(초) 이상 크면 resolve_pending 생략 (한쪽 cam 지연 대응).
