@@ -49,36 +49,41 @@ CAM_SETTINGS = {
     "Scanner": {"dist": -2.3},
     "USB_LOCAL": {
         "rotate": 90,
-        "roi_y": 750, "roi_margin": 100,
-        "dist_eps": 60, "max_dy": 120,
+        "roi_y_rate": 0.586,     # (750 / 1280)
+        "roi_margin_rate": 0.078, # (100 / 1280)
+        "dist_eps_rate": 0.047,   # (60 / 1280)
+        "max_dy_rate": 0.094,     # (120 / 1280)
         "forward_sign": -1,
-        "dist": 0.0,
-        "parts": [("081952_961", "082029_085")]
+        "dist": 0.0
     },
     "RPI_USB1": {
         "rotate": 270,
-        "roi_y": 400, "roi_margin": 30,
-        "dist_eps": 35, "max_dy": 80,
+        "roi_y_rate": 0.313,     # (300 / 960)
+        "roi_margin_rate": 0.024, # (23 / 960)
+        "dist_eps_rate": 0.027,   # (26 / 960)
+        "max_dy_rate": 0.063,     # (60 / 960)
         "forward_sign": 1,
-        "dist": 5.88,
-        "parts": [("082008_660", "082046_675")]
+        "dist": 5.88
     },
     "RPI_USB2": {
         "rotate": 270,
-        "roi_y": 160, "roi_margin": 30,
-        "dist_eps": 35, "max_dy": 80,
+        "roi_y_rate": 0.125,     # (120 / 960)
+        "roi_margin_rate": 0.024,
+        "dist_eps_rate": 0.027,
+        "max_dy_rate": 0.063,
         "forward_sign": -1,
-        "dist": 9.47,
-        "parts": [("082018_216", "082054_026")]
+        "dist": 9.47
     },
     "RPI_USB3": {
         "rotate": 270,
-        "roi_y": 400, "roi_margin": 40,
-        "eol_y": 690, "eol_margin": 30,
-        "dist_eps": 35, "max_dy": 80,
+        "roi_y_rate": 0.313,     # (300 / 960)
+        "roi_margin_rate": 0.031,
+        "eol_y_rate": 0.540,     # (518 / 960)
+        "eol_margin_rate": 0.024,
+        "dist_eps_rate": 0.027,
+        "max_dy_rate": 0.063,
         "forward_sign": 1,
-        "dist": 12.8,
-        "parts": [("082028_591", "082107_610")]
+        "dist": 12.8
     }
 }
 

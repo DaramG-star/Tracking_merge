@@ -11,6 +11,7 @@ import sys
 import time
 import cv2
 import threading
+import numpy as np
 from pathlib import Path
 
 # Ensure track root is on path
@@ -49,24 +50,20 @@ def main():
     loader = ConfigLoader()
     loader.load()
     
-    # 동기화 버퍼 대신 즉시 접근 가능한 Aggregator 사용
     frame_sink = FrameAggregator()
     
-    # 전역 상태 변수
     global _running
     _running = True
     
     active_tracks = {cam: {} for cam in config.TRACKING_CAMS}
     local_uid_counter = {cam: 0 for cam in config.TRACKING_CAMS}
     last_processed_ts = {cam: 0 for cam in config.TRACKING_CAMS}
-    target_interval = 0.25  # 250ms 간격 처리 (초과 프레임 스킵용)
+    target_interval = 0.25
 
-    # 로직 객체 초기화
     detector = YOLODetector(config.MODEL_PATH)
     matcher = FIFOGlobalMatcher()
     visualizer = TrackingVisualizer(enabled=args.video)
 
-    # ZMQ 수신 설정
     import zmq
     ctx = zmq.Context()
     receivers = []
@@ -94,7 +91,6 @@ def main():
         recv.start()
         receivers.append(recv)
 
-    # USB 카메라 설정
     usb_workers = []
     for cam_name, cam_cfg in loader.get_local_usb_cameras().items():
         if not cam_cfg.get("enabled", True): continue
@@ -116,11 +112,9 @@ def main():
     usb_feeder = threading.Thread(target=usb_feeder_loop, daemon=True)
     usb_feeder.start()
 
-    # 스캐너 리스너
     scanner_listener = ScannerListener(matcher, host=config.SCANNER_HOST, port=config.SCANNER_PORT)
     scanner_listener.start()
 
-    # CSV 설정
     csv_file = None
     csv_writer = None
     if args.csv:
@@ -136,7 +130,7 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    print("[main2] Async Mode Started. Processing frames as they arrive.")
+    print("[main2] Async Mode Started (640 Inference + ROI Visualization)")
 
     try:
         while _running:
@@ -147,13 +141,12 @@ def main():
                 img, ts = pair
                 if ts <= last_processed_ts[cam] or (ts - last_processed_ts[cam]) < target_interval * 0.8:
                     continue
-                
                 last_processed_ts[cam] = ts
                 
                 cfg = config.CAM_SETTINGS.get(cam)
                 if not cfg: continue
 
-                # 이미지 회전
+                # 1. 이미지 회전
                 rotate_val = cfg.get("rotate", 0)
                 if rotate_val == 90:
                     img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
@@ -162,8 +155,38 @@ def main():
                 elif rotate_val == 270:
                     img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
-                print(f"[{cam}] Resolution: {img.shape[1]}x{img.shape[0]}")
-                
+                # 2. 병목 방지를 위한 640 리사이징
+                target_w = 640
+                h_orig, w_orig = img.shape[:2]
+                scale = target_w / w_orig
+                target_h = int(h_orig * scale)
+                img = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_AREA)
+
+                # 3. 실시간 해상도 기반 비율 설정 계산
+                H, W = img.shape[:2]
+                cfg['roi_y'] = int(H * cfg.get('roi_y_rate', 0))
+                cfg['roi_margin'] = int(H * cfg.get('roi_margin_rate', 0))
+                cfg['dist_eps'] = int(H * cfg.get('dist_eps_rate', 0))
+                cfg['max_dy'] = int(H * cfg.get('max_dy_rate', 0))
+                if 'eol_y_rate' in cfg:
+                    cfg['eol_y'] = int(H * cfg['eol_y_rate'])
+                    cfg['eol_margin'] = int(H * cfg['eol_margin_rate'])
+
+                # 4. ROI 시각화 (display 옵션 시 화면에 가이드라인 그림)
+                if args.display:
+                    # ROI 메인 라인 (노란색)
+                    cv2.line(img, (0, cfg['roi_y']), (W, cfg['roi_y']), (0, 255, 255), 2)
+                    # ROI 마진 영역 (반투명 빨간색)
+                    overlay = img.copy()
+                    y_min = max(0, cfg['roi_y'] - cfg['roi_margin'])
+                    y_max = min(H, cfg['roi_y'] + cfg['roi_margin'])
+                    cv2.rectangle(overlay, (0, y_min), (W, y_max), (0, 0, 255), -1)
+                    cv2.addWeighted(overlay, 0.2, img, 0.8, 0, img)
+                    
+                    if 'eol_y' in cfg:
+                        cv2.line(img, (0, cfg['eol_y']), (W, cfg['eol_y']), (255, 0, 255), 2) # EOL 라인 (보라색)
+
+                # 5. Detection
                 detections = detector.get_detections(img, cfg, cam)
                 
                 new_active = {}
@@ -171,6 +194,10 @@ def main():
                     cx, cy = det["center"]
                     x1, y1, x2, y2 = det["box"]
                     
+                    # 시각화: 감지된 박스 그리기
+                    if args.display:
+                        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
                     best_uid, best_score = None, 1e9
                     for uid, info in active_tracks[cam].items():
                         dx = abs(cx - info["last_pos"][0])
@@ -182,7 +209,6 @@ def main():
 
                     mid = None
                     event_type = "TRACKING"
-                    
                     if best_uid:
                         mid = active_tracks[cam][best_uid]["master_id"]
                     else:
@@ -194,7 +220,6 @@ def main():
 
                     if mid:
                         new_active[best_uid] = {"last_pos": (cx, cy), "master_id": mid}
-                        
                         total_dist = config.ROUTE_TOTAL_DIST.get(matcher.masters[mid]["route_code"], 12.8)
                         elapsed = ts - matcher.masters[mid]["start_time"]
                         rem_dist = max(0.0, total_dist - (elapsed * config.BELT_SPEED))
@@ -206,18 +231,15 @@ def main():
                             if crop.size > 0:
                                 save_thumbnail_to_nfs(mid, crop)
                         
-                        api_helper.api_update_position(mid, step_dist)
+                        api_helper.api_update_position(mid, step_dist, thumbnail_image=None)
 
-                    # CSV 로그 기록 시 event_type 변수 사용
                     if args.csv and csv_writer:
                         csv_writer.writerow({
-                            "timestamp": ts,
-                            "cam": cam,
-                            "local_uid": best_uid,
-                            "master_id": mid if mid else "",
-                            "event": event_type
+                            "timestamp": ts, "cam": cam, "local_uid": best_uid,
+                            "master_id": mid if mid else "", "event": event_type
                         })
 
+                # 사라진 트랙 처리
                 for old_uid, old_info in active_tracks[cam].items():
                     if old_uid not in new_active:
                         mid = old_info["master_id"]
@@ -234,6 +256,8 @@ def main():
                 active_tracks[cam] = new_active
 
                 if args.display:
+                    # 텍스트 정보 표시
+                    cv2.putText(img, f"CAM: {cam} | {W}x{H}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.imshow(f"track_{cam}", img)
                     if cv2.waitKey(1) & 0xFF == ord('q'): _running = False
 
