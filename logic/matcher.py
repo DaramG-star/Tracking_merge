@@ -64,6 +64,13 @@ class FIFOGlobalMatcher:
         if not info:
             return {"mid": None, "reason": "INVALID_MASTER", "prev_cam": prev_cam}
 
+        if cam in info.get("uids", {}):
+            info.update({"last_width": width})
+            return {
+                "mid": mid, "reason": "ALREADY_MATCHED_CONTINUE", 
+                "actual_time": round(time_s, 3), "prev_cam": prev_cam
+            }
+        
         avg_travel = config.AVG_TRAVEL.get((prev_cam, cam), 0)
         expected = info["last_time"] + avg_travel
         margin = config.TIME_MARGIN.get((prev_cam, cam), 2.0)
@@ -94,7 +101,12 @@ class FIFOGlobalMatcher:
         if is_q_scan: heapq.heappop(self.queues[q_key])
         else: queue.popleft()
 
-        info.update({"last_cam": cam, "last_time": time_s, "last_width": width, "status": "TRACKING"})
+        info.update({
+            "last_cam": cam, 
+            "last_time": time_s, 
+            "last_width": width, 
+            "status": "TRACKING"
+        })
         info["uids"][cam] = uid
         if info["start_time"] is None: info["start_time"] = time_s
         if next_q_key: self.queues[next_q_key].append(mid)
