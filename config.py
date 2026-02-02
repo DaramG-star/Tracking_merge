@@ -49,39 +49,39 @@ CAM_SETTINGS = {
     "Scanner": {"dist": -2.3},
     "USB_LOCAL": {
         "rotate": 90,
-        "roi_y_rate": 0.586,     # (750 / 1280)
-        "roi_margin_rate": 0.078, # (100 / 1280)
-        "dist_eps_rate": 0.047,   # (60 / 1280)
-        "max_dy_rate": 0.094,     # (120 / 1280)
+        "roi_y_rate": 0.586,     
+        "roi_margin_rate": 0.078, 
+        "dist_eps_rate": 0.047,   
+        "max_dy_rate": 0.094,     
         "forward_sign": -1,
         "dist": 0.0
     },
     "RPI_USB1": {
         "rotate": 270,
-        "roi_y_rate": 0.313,     # (300 / 960)
-        "roi_margin_rate": 0.024, # (23 / 960)
-        "dist_eps_rate": 0.027,   # (26 / 960)
-        "max_dy_rate": 0.063,     # (60 / 960)
+        "roi_y_rate": 0.417,     
+        "roi_margin_rate": 0.031, 
+        "dist_eps_rate": 0.036,   
+        "max_dy_rate": 0.083,     
         "forward_sign": 1,
         "dist": 5.88
     },
     "RPI_USB2": {
         "rotate": 270,
-        "roi_y_rate": 0.125,     # (120 / 960)
-        "roi_margin_rate": 0.024,
-        "dist_eps_rate": 0.027,
-        "max_dy_rate": 0.063,
+        "roi_y_rate": 0.167,     
+        "roi_margin_rate": 0.031,
+        "dist_eps_rate": 0.036,
+        "max_dy_rate": 0.083,
         "forward_sign": -1,
         "dist": 9.47
     },
     "RPI_USB3": {
         "rotate": 270,
-        "roi_y_rate": 0.313,     # (300 / 960)
-        "roi_margin_rate": 0.031,
-        "eol_y_rate": 0.540,     # (518 / 960)
-        "eol_margin_rate": 0.024,
-        "dist_eps_rate": 0.027,
-        "max_dy_rate": 0.063,
+        "roi_y_rate": 0.417,     
+        "roi_margin_rate": 0.042,
+        "eol_y_rate": 0.719,     
+        "eol_margin_rate": 0.031,
+        "dist_eps_rate": 0.036,
+        "max_dy_rate": 0.083,
         "forward_sign": 1,
         "dist": 12.8
     }
