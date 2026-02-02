@@ -179,14 +179,26 @@ def main():
 
                 # 4. ROI 가이드라인 시각화 (display 옵션 시)
                 if args.display:
-                    # 가로 범위 외곽 어둡게 처리 (벨트 영역 강조)
+                    # 베이스 오버레이 생성 (투명 작업용)
                     overlay = img.copy()
+                    
+                    # 1) 가로 제한 영역 시각화 (좌우를 어둡게)
                     cv2.rectangle(overlay, (0, 0), (cfg['roi_x_min'], H), (0, 0, 0), -1)
                     cv2.rectangle(overlay, (cfg['roi_x_max'], 0), (W, H), (0, 0, 0), -1)
-                    cv2.addWeighted(overlay, 0.4, img, 0.6, 0, img)
                     
-                    # ROI 메인 라인 (가로 범위 내에만 노란색 선 표시)
+                    # 2) 세로 ROI 마진 영역 시각화 (중앙 반투명 빨간색)
+                    y_min = max(0, cfg['roi_y'] - cfg['roi_margin'])
+                    y_max = min(H, cfg['roi_y'] + cfg['roi_margin'])
+                    # 가로 범위(roi_x_min ~ roi_x_max) 안에서만 빨간색으로 표시
+                    cv2.rectangle(overlay, (cfg['roi_x_min'], y_min), (cfg['roi_x_max'], y_max), (0, 0, 255), -1)
+                    
+                    # 오버레이 합성 (가로 어두운 부분과 빨간색 마진 동시 적용)
+                    cv2.addWeighted(overlay, 0.3, img, 0.7, 0, img)
+                    
+                    # 3) ROI 메인 라인 (노란색 선)
                     cv2.line(img, (cfg['roi_x_min'], cfg['roi_y']), (cfg['roi_x_max'], cfg['roi_y']), (0, 255, 255), 2)
+                    
+                    # EOL 라인이 있는 경우 (보라색 선)
                     if 'eol_y' in cfg:
                         cv2.line(img, (cfg['roi_x_min'], cfg['eol_y']), (cfg['roi_x_max'], cfg['eol_y']), (255, 0, 255), 2)
 
