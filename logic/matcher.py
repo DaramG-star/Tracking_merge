@@ -47,72 +47,63 @@ class FIFOGlobalMatcher:
             "pending_from_cam": None
         }
         heapq.heappush(self.queues["q_scan"], (mid, route_code))
+        # 큐 상태 확인
+        print(f"📥 [Matcher] Q_SCAN updated. Current size: {len(self.queues['q_scan'])}")
 
     def _try_fifo(self, q_key, prev_cam, cam, time_s, width, uid, next_q_key=None):
         is_q_scan = q_key == "q_scan"
         queue = self.queues[q_key]
 
         if not queue:
-            self.last_match_attempt = {"status": "EMPTY_QUEUE", "q_key": q_key}
-            return None
+            return {"mid": None, "reason": "EMPTY_QUEUE", "prev_cam": prev_cam}
 
-        if is_q_scan:
-            item = queue[0]
-            mid = item[0]
-        else:
-            item = queue[0]
-            mid = item[0] if isinstance(item, tuple) else item
-
+        item = queue[0]
+        mid = item[0] if (is_q_scan or isinstance(item, tuple)) else item
         info = self.masters.get(mid)
+
         if not info:
-            return None
+            return {"mid": None, "reason": "INVALID_MASTER", "prev_cam": prev_cam}
 
         avg_travel = config.AVG_TRAVEL.get((prev_cam, cam), 0)
         expected = info["last_time"] + avg_travel
         margin = config.TIME_MARGIN.get((prev_cam, cam), 2.0)
         diff = time_s - expected
 
-        self.last_match_attempt = {
-            "q_key": q_key,
+        # 상세 매칭 정보 생성
+        attempt_detail = {
             "mid": mid,
-            "target_uid": uid,
-            "expected": round(expected, 3),
-            "actual": round(time_s, 3),
+            "prev_cam": prev_cam,
+            "prev_time": round(info["last_time"], 3),
+            "expected_time": round(expected, 3),
+            "actual_time": round(time_s, 3),
             "diff": round(diff, 3),
-            "margin": margin,
-            "prev_cam": prev_cam
+            "margin": margin
         }
 
         if abs(diff) > margin:
-            self.last_match_attempt["status"] = "OUT_OF_MARGIN"
-            return None
+            attempt_detail["mid"] = None
+            attempt_detail["reason"] = "OUT_OF_MARGIN"
+            return attempt_detail
 
         if time_s <= info["last_time"]:
-            self.last_match_attempt["status"] = "TIME_REVERSED"
-            return None
+            attempt_detail["mid"] = None
+            attempt_detail["reason"] = "TIME_REVERSED"
+            return attempt_detail
 
-        self.last_match_attempt["status"] = "SUCCESS"
-        if is_q_scan:
-            heapq.heappop(self.queues[q_key])
-        else:
-            queue.popleft()
+        # 매칭 성공 처리
+        if is_q_scan: heapq.heappop(self.queues[q_key])
+        else: queue.popleft()
 
-        info.update({
-            "last_cam": cam,
-            "last_time": time_s,
-            "last_width": width,
-            "status": "TRACKING"
-        })
+        info.update({"last_cam": cam, "last_time": time_s, "last_width": width, "status": "TRACKING"})
         info["uids"][cam] = uid
+        if info["start_time"] is None: info["start_time"] = time_s
+        if next_q_key: self.queues[next_q_key].append(mid)
 
-        if info["start_time"] is None:
-            info["start_time"] = time_s
+        attempt_detail["reason"] = "SUCCESS"
+        return attempt_detail
 
-        if next_q_key:
-            self.queues[next_q_key].append(mid)
-        return mid
-
-    def try_match(self, cam, time_s, width, uid, scanner_data=None):
+    def try_match(self, cam, time_s, width, uid):
+        # 반환값이 이제 mid가 아니라 딕셔너리입니다.
         if cam == "USB_LOCAL":
             return self._try_fifo("q_scan", "Scanner", cam, time_s, width, uid, "q01")
         elif cam == "RPI_USB1":
@@ -123,7 +114,7 @@ class FIFOGlobalMatcher:
             return self._try_fifo("q23", "RPI_USB2", cam, time_s, width, uid, "q3e")
         elif cam == "RPI_USB3_EOL":
             return self._try_fifo("q3e", "RPI_USB3", cam, time_s, width, uid)
-        return None
+        return {"mid": None, "reason": "UNKNOWN_CAM"}
 
     def resolve_pending(self, mid, now_s):
         info = self.masters[mid]

@@ -116,9 +116,13 @@ def main():
     csv_file = None
     csv_writer = None
     if args.csv:
-        csv_path = config.OUT_DIR / "tracking_logs_async.csv"
+        csv_path = config.OUT_DIR / "tracking_logs_detailed.csv"
         csv_file = open(csv_path, "w", newline="", encoding="utf-8")
-        csv_writer = csv.DictWriter(csv_file, fieldnames=["timestamp", "cam", "local_uid", "master_id", "event"])
+        fieldnames = [
+            "timestamp", "cam", "local_uid", "master_id", "event", 
+            "reason", "prev_cam", "prev_time", "expected_time", "diff", "margin"
+        ]
+        csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         csv_writer.writeheader()
 
     def shutdown(*_):
@@ -140,6 +144,12 @@ def main():
                 if ts <= last_processed_ts[cam] or (ts - last_processed_ts[cam]) < target_interval * 0.8:
                     continue
                 last_processed_ts[cam] = ts
+
+                import datetime
+                dt = datetime.datetime.fromtimestamp(ts)
+                # 시*3600 + 분*60 + 초 + 마이크로초
+                ts_today = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1000000.0
+            
                 
                 cfg = config.CAM_SETTINGS.get(cam)
                 if not cfg: continue
@@ -207,23 +217,26 @@ def main():
                 detections = detector.get_detections(img, cfg, cam)
                 inf_dt = time.perf_counter() - inf_t0
                 
-                # [디버깅 로그]
-                if len(detections) > 0:
-                    print(f"[{cam}] Found {len(detections)} boxes. Inf: {inf_dt:.3f}s")
+                # # [디버깅 로그]
+                # if len(detections) > 0:
+                #     print(f"[{cam}] Found {len(detections)} boxes. Inf: {inf_dt:.3f}s")
                 
                 new_active = {}
                 for det in detections:
                     cx, cy = det["center"]
                     x1, y1, x2, y2 = det["box"]
 
-                    # ROI 가로 범위 체크 (중심점 기준)
+                    # 1. 가로(X) 범위 체크 (기본 필터)
                     in_x_range = (cfg['roi_x_min'] <= cx <= cfg['roi_x_max'])
                     
-                    # ROI 밖 물체는 시각화만 하고 로직은 무시
                     if not in_x_range:
                         if args.display:
                             cv2.rectangle(img, (x1, y1), (x2, y2), (150, 150, 150), 1)
                         continue
+
+                    # 2. 세로(Y) ROI 통과 여부 체크 (라인 근처인지 확인)
+                    # 물체 중심(cy)이 roi_y 기준 roi_margin 이내에 있는지 확인
+                    in_y_roi = abs(cy - cfg['roi_y']) <= cfg['roi_margin']
 
                     best_uid, best_score = None, 1e9
                     for uid, info in active_tracks[cam].items():
@@ -236,14 +249,40 @@ def main():
 
                     mid = None
                     event_type = "TRACKING"
+                    
                     if best_uid:
+                        # 이미 추적 중인 물체는 기존 ID 유지
                         mid = active_tracks[cam][best_uid]["master_id"]
                     else:
-                        local_uid_counter[cam] += 1
-                        best_uid = f"{cam}_{local_uid_counter[cam]:03d}"
-                        match_cam = "RPI_USB3_EOL" if det.get("in_eol") else cam
-                        mid = matcher.try_match(match_cam, ts, det["width"], best_uid)
-                        event_type = "MATCHED" if mid else "UNMATCHED"
+                        # 새로운 물체 발견 시: ROI 라인 근처(in_y_roi)일 때만 매칭 시도
+                        if in_y_roi:
+                            local_uid_counter[cam] += 1
+                            best_uid = f"{cam}_{local_uid_counter[cam]:03d}"
+                            match_cam = "RPI_USB3_EOL" if det.get("in_eol") else cam
+                            
+                            # 1. 이제 try_match는 결과 딕셔너리를 반환합니다.
+                            match_result = matcher.try_match(match_cam, ts_today, det["width"], best_uid)
+                            mid = match_result["mid"]
+                            event_type = "MATCHED" if mid else "UNMATCHED"
+                            
+                            # 2. CSV 기록 시 상세 정보 포함
+                            if args.csv and csv_writer:
+                                log_row = {
+                                    "timestamp": ts_today,
+                                    "cam": cam,
+                                    "local_uid": best_uid,
+                                    "master_id": mid if mid else "",
+                                    "event": event_type,
+                                    "reason": match_result.get("reason", ""),
+                                    "prev_cam": match_result.get("prev_cam", ""),
+                                    "prev_time": match_result.get("prev_time", ""),
+                                    "expected_time": match_result.get("expected_time", ""),
+                                    "diff": match_result.get("diff", ""),
+                                    "margin": match_result.get("margin", "")
+                                }
+                                csv_writer.writerow(log_row)
+                        else:
+                            continue
 
                     # 상태별 시각화 (매칭 성공: 초록, 실패: 빨강)
                     if args.display:
@@ -255,7 +294,7 @@ def main():
                     if mid:
                         new_active[best_uid] = {"last_pos": (cx, cy), "master_id": mid}
                         total_dist = config.ROUTE_TOTAL_DIST.get(matcher.masters[mid]["route_code"], 12.8)
-                        elapsed = ts - matcher.masters[mid]["start_time"]
+                        elapsed = ts_today - matcher.masters[mid]["start_time"]
                         rem_dist = max(0.0, total_dist - (elapsed * config.BELT_SPEED))
                         step_dist = round(rem_dist / 0.5) * 0.5
                         
@@ -268,8 +307,11 @@ def main():
 
                     if args.csv and csv_writer:
                         csv_writer.writerow({
-                            "timestamp": ts, "cam": cam, "local_uid": best_uid,
-                            "master_id": mid if mid else "", "event": event_type
+                            "timestamp": ts_today,  # 변환하지 않은 원본 float 값 기록
+                            "cam": cam, 
+                            "local_uid": best_uid,
+                            "master_id": mid if mid else "", 
+                            "event": event_type
                         })
 
                 # PENDING 처리
@@ -281,7 +323,7 @@ def main():
                             matcher.masters[m_id]["pending_from_cam"] = cam
 
                 for mid_res in list(matcher.masters.keys()):
-                    result = matcher.resolve_pending(mid_res, ts)
+                    result = matcher.resolve_pending(mid_res, ts_today)
                     if result:
                         if result["decision"] == "PICKUP": api_helper.api_pickup(mid_res)
                         elif result["decision"] == "DISAPPEAR": api_helper.api_disappear(mid_res)
