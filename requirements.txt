@@ -1,0 +1,15 @@
+# ZMQ
+pyzmq>=25.0.0
+lz4>=4.0.0
+
+# Image / tracking
+opencv-python>=4.5.0
+numpy>=1.19.0
+ultralytics>=8.0.0
+
+# API / Scanner (required)
+requests>=2.25.0
+python-socketio[client]>=5.0.0
+
+# Tests (optional; tests also run with: python3 -m unittest discover -s tests -p 'test_*.py')
+# pytest>=7.0.0

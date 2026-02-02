@@ -1,0 +1,47 @@
+{
+  "start_time": "2026-02-01T17:02:25.744466",
+  "end_time": "2026-02-01T17:18:40.385988",
+  "camera_stats": {
+    "0": {
+      "received": 0,
+      "dropped": 0,
+      "fps": []
+    },
+    "1": {
+      "received": 0,
+      "dropped": 0,
+      "fps": []
+    },
+    "2": {
+      "received": 0,
+      "dropped": 0,
+      "fps": []
+    },
+    "3": {
+      "received": 0,
+      "dropped": 0,
+      "fps": []
+    }
+  },
+  "tracking_stats": {
+    "total_tracks": 0,
+    "active_tracks": 0,
+    "disappeared_count": 0,
+    "pending_count": 0
+  },
+  "latency_stats": {
+    "frame_to_detection": [],
+    "detection_to_tracking": [],
+    "total_pipeline": []
+  },
+  "api_calls": {
+    "detect-disappear": 0,
+    "detect-position": 0,
+    "detect-pickup": 0,
+    "detect-eol": 0
+  },
+  "errors": [],
+  "warnings": [
+    "HTTP API unavailable (connection refused/timeout) - not counted as errors"
+  ]
+}

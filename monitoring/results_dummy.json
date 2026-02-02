@@ -1,0 +1,18 @@
+{
+  "start_time": "2026-02-01T10:00:00",
+  "end_time": "2026-02-01T11:00:00",
+  "camera_stats": {
+    "0": {"received": 60, "dropped": 1, "fps": [18, 19, 17, 18]},
+    "1": {"received": 60, "dropped": 0, "fps": [19, 20, 18, 19]},
+    "2": {"received": 58, "dropped": 2, "fps": [17, 18, 16, 17]},
+    "3": {"received": 60, "dropped": 0, "fps": [18, 19, 18, 19]}
+  },
+  "tracking_stats": {"total_tracks": 10, "active_tracks": 3, "disappeared_count": 0, "pending_count": 1},
+  "latency_stats": {
+    "frame_to_detection": [30, 35, 32],
+    "detection_to_tracking": [20, 22, 21],
+    "total_pipeline": [55, 60, 58]
+  },
+  "api_calls": {"detect-disappear": 2, "detect-position": 50, "detect-pickup": 5, "detect-eol": 3},
+  "errors": []
+}
