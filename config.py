@@ -96,9 +96,9 @@ AVG_TRAVEL = {
 }
 
 TIME_MARGIN = {
-    ("Scanner", "USB_LOCAL"): 8.0,
-    ("USB_LOCAL", "RPI_USB1"): 7.0,
-    ("RPI_USB1", "RPI_USB2"): 7.0,
+    ("Scanner", "USB_LOCAL"): 6.0,
+    ("USB_LOCAL", "RPI_USB1"): 5.0,
+    ("RPI_USB1", "RPI_USB2"): 5.0,
     ("RPI_USB2", "RPI_USB3"): 2.0,
     ("RPI_USB3", "RPI_USB3_EOL"): 2.0
 }
