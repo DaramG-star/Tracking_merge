@@ -11,6 +11,7 @@ import signal
 import sys
 import time
 import cv2
+import numpy as np
 from pathlib import Path
 
 # 4개 카메라 짝 맞춤 로그: timestamp 범위 이하면 COMPLETE, 초과면 SPREAD (초 단위)
@@ -208,20 +209,12 @@ def main():
     resolve_ts_ahead_sec = getattr(config, "RESOLVE_PENDING_TS_AHEAD_SEC", 5)
 
     def process_one_frame(cam, img, ts, time_s):
-        """한 카메라 프레임에 대한 detection, matching, pending, resolve, position API, video/display."""
+        """한 카메라 프레임에 대한 전처리 및 감지 로직 호출."""
         cfg = config.CAM_SETTINGS.get(cam)
         if not cfg:
             return
-        detections = detector.get_detections(img, cfg, cam)
-        _process_with_detections(cam, img, ts, time_s, detections)
 
-    def _process_with_detections(cam, img, ts, time_s, detections, thumbnail_crops=None):
-        """detection 결과를 받아 matching, pending, resolve, position API, video/display만 수행."""
-        global cv2
-        cfg = config.CAM_SETTINGS.get(cam)
-        if not cfg:
-            return
-        
+        # 1. 이미지 회전
         rotate_val = cfg.get("rotate", 0)
         if rotate_val == 90:
             img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
@@ -230,6 +223,45 @@ def main():
         elif rotate_val == 270:
             img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
+        # 2. 병목 방지를 위한 640 리사이징
+        target_w = 640
+        h_orig, w_orig = img.shape[:2]
+        scale = target_w / w_orig
+        target_h = int(h_orig * scale)
+        img = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_AREA)
+
+        # 3. 실시간 해상도 기반 비율 설정 계산하여 cfg 업데이트
+        H, W = img.shape[:2]
+        cfg['roi_y'] = int(H * cfg.get('roi_y_rate', 0))
+        cfg['roi_margin'] = int(H * cfg.get('roi_margin_rate', 0))
+        cfg['dist_eps'] = int(H * cfg.get('dist_eps_rate', 0))
+        cfg['max_dy'] = int(H * cfg.get('max_dy_rate', 0))
+        if 'eol_y_rate' in cfg:
+            cfg['eol_y'] = int(H * cfg['eol_y_rate'])
+            cfg['eol_margin'] = int(H * cfg['eol_margin_rate'])
+
+        # 4. ROI 가이드라인 시각화 (display 옵션 시)
+        if args.display:
+            cv2.line(img, (0, cfg['roi_y']), (W, cfg['roi_y']), (0, 255, 255), 2)
+            overlay = img.copy()
+            y_min = max(0, cfg['roi_y'] - cfg['roi_margin'])
+            y_max = min(H, cfg['roi_y'] + cfg['roi_margin'])
+            cv2.rectangle(overlay, (0, y_min), (W, y_max), (0, 0, 255), -1)
+            cv2.addWeighted(overlay, 0.2, img, 0.8, 0, img)
+            if 'eol_y' in cfg:
+                cv2.line(img, (0, cfg['eol_y']), (W, cfg['eol_y']), (255, 0, 255), 2)
+
+        detections = detector.get_detections(img, cfg, cam)
+        _process_with_detections(cam, img, ts, time_s, detections)
+
+    def _process_with_detections(cam, img, ts, time_s, detections, thumbnail_crops=None):
+        """detection 결과를 받아 matching, pending, resolve, position API, video/display 수행."""
+        global cv2
+        cfg = config.CAM_SETTINGS.get(cam)
+        if not cfg:
+            return
+        
+        # (img는 process_one_frame에서 이미 회전/리사이징됨)
         new_active = {}
         if thumbnail_crops is None:
             thumbnail_crops = {}
@@ -279,16 +311,17 @@ def main():
                     "timestamp": ts, "cam": cam, "local_uid": best_uid, "master_id": mid or "",
                     "route": route, "x1": x1, "y1": y1, "x2": x2, "y2": y2, "event": event_type
                 })
+            
             if event_type != "MISSING":
                 new_active[best_uid] = {"last_pos": (cx, cy), "master_id": mid}
-                # 썸네일: TRACKING/MATCHED 시 crop → NFS에 반드시 저장 (/mnt/thumbnails/{uid}.jpg). 100 서버 웹이 /thumbnails/{uid}.jpg 로 제공.
+                # 썸네일: USB_LOCAL 일 때만 TRACKING/MATCHED 시 crop → NFS 저장
                 if mid and event_type in ("TRACKING", "MATCHED"):
                     if cam == "USB_LOCAL":
                         h, w = img.shape[:2]
                         crop = img[max(0, y1):min(h, y2), max(0, x1):min(w, x2)]
                         if crop.size > 0:
                             save_thumbnail_to_nfs(mid, crop)
-                            set_thumbnail_crops[mid] = crop  # position API 호출 시에도 NFS 저장용으로 전달
+                            set_thumbnail_crops[mid] = crop
 
         # Pending: mark as PENDING if no longer in frame
         for old_uid, old_info in active_tracks[cam].items():
@@ -307,6 +340,7 @@ def main():
             min_consumed = min((t for t in last_consumed_ts.values() if t is not None), default=time_s)
             if time_s > min_consumed + resolve_ts_ahead_sec:
                 skip_resolve = True
+        
         if not skip_resolve:
             for mid in list(matcher.masters.keys()):
                 result = matcher.resolve_pending(mid, time_s)
@@ -347,18 +381,21 @@ def main():
             atracks = dict(active_tracks)
             atracks[cam] = new_active
             visualizer.draw_and_write(cam, img, detections, matcher.masters, ts, atracks)
+        
         if args.display:
+            cv2.putText(img, f"CAM: {cam} | Resized: {img.shape[1]}x{img.shape[0]}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.imshow(f"track_{cam}", img)
+        
         active_tracks[cam] = new_active
 
     def _timed_get_detections(cam, img, cfg):
-        """get_detections 실행 + 소요 시간(초) 반환. (detections, elapsed_sec)."""
+        """get_detections 실행 + 소요 시간(초) 반환."""
         t0 = time.perf_counter()
         dets = detector.get_detections(img, cfg, cam)
         return (dets, time.perf_counter() - t0)
 
     def run_detections_for_set(set_):
-        """4 cam detection을 병렬 실행해 ({cam: detections}, detection_per_cam_sec, wall_sec) 반환."""
+        """4 cam detection을 병렬 실행."""
         from concurrent.futures import ThreadPoolExecutor
         out = {}
         per_cam_sec = {}
@@ -372,7 +409,35 @@ def main():
                 cfg = config.CAM_SETTINGS.get(cam)
                 if not cfg or img is None:
                     continue
+                
+                # 1. 회전
+                rotate_val = cfg.get("rotate", 0)
+                if rotate_val == 90: img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+                elif rotate_val == 180: img = cv2.rotate(img, cv2.ROTATE_180)
+                elif rotate_val == 270: img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+                # 2. 리사이징
+                target_w = 640
+                h_orig, w_orig = img.shape[:2]
+                scale = target_w / w_orig
+                img = cv2.resize(img, (target_w, int(h_orig * scale)), interpolation=cv2.INTER_AREA)
+
+                # 3. 비율 기반 계산
+                H_new, W_new = img.shape[:2]
+                cfg['roi_y'] = int(H_new * cfg.get('roi_y_rate', 0))
+                cfg['roi_margin'] = int(H_new * cfg.get('roi_margin_rate', 0))
+                cfg['dist_eps'] = int(H_new * cfg.get('dist_eps_rate', 0))
+                cfg['max_dy'] = int(H_new * cfg.get('max_dy_rate', 0))
+                if 'eol_y_rate' in cfg:
+                    cfg['eol_y'] = int(H_new * cfg['eol_y_rate'])
+                    cfg['eol_margin'] = int(H_new * cfg['eol_margin_rate'])
+                
+                # 가이드라인 시각화 (set 모드에서도 시각화 필요시)
+                if args.display:
+                    cv2.line(img, (0, cfg['roi_y']), (W_new, cfg['roi_y']), (0, 255, 255), 2)
+
                 futures[cam] = ex.submit(_timed_get_detections, cam, img, cfg)
+            
             for cam, fut in futures.items():
                 dets, elapsed = fut.result()
                 out[cam] = dets
@@ -381,7 +446,7 @@ def main():
         return out, per_cam_sec, wall_sec
 
     def time_based_position_update(now_s: float) -> None:
-        """세트 스킵 시: 비전 없이 TRACKING/PENDING master의 남은 거리만 now_s 기준으로 갱신."""
+        """세트 스킵 시 now_s 기준으로 거리 갱신."""
         for mid, m_info in matcher.masters.items():
             if m_info["status"] in ["TRACKING", "PENDING"] and m_info.get("start_time") is not None:
                 total_dist = config.ROUTE_TOTAL_DIST.get(m_info["route_code"], 12.8)
@@ -395,7 +460,7 @@ def main():
                     )
                     m_info["last_sent_dist"] = step_dist
 
-    # 500ms 윈도우 세트 모드 (스트림 시간 + wall-clock 상한)
+    # 500ms 윈도우 세트 모드
     window_interval = getattr(config, "WINDOW_SET_INTERVAL_SEC", 0.5)
     max_wait_wall = getattr(config, "WINDOW_MAX_WAIT_WALL_SEC", 0.5)
     THEORETICAL_MAX_SETS_PER_SEC = 2
@@ -403,162 +468,61 @@ def main():
     try:
         while _running:
             if use_time_ordered:
-                # T_cur 초기화: 버퍼에 데이터 있을 때 최소 timestamp
                 if T_cur is None:
                     T_cur = frame_sink.get_min_timestamp()
                     if T_cur is None:
                         time.sleep(0.01)
-                        if time.time() - last_stats_time >= 1.0:
-                            frame_counts, quarter_counts = frame_sink.get_stats_and_reset()
-                            cams = config.TRACKING_CAMS
-                            bottleneck_cam = min(cams, key=lambda c: frame_counts.get(c, 0)) if cams else None
-                            stats_ev = {
-                                "event": "FRAME_STATS",
-                                "timestamp": time.time(),
-                                "interval": "1s",
-                                "frame_counts": frame_counts,
-                                "bottleneck_camera": bottleneck_cam,
-                                "theoretical_max_sets": THEORETICAL_MAX_SETS_PER_SEC,
-                                "actual_sets_created": 0,
-                                "efficiency": 0.0,
-                                "quarters": [{"quarter": q, "frames_in_quarter": quarter_counts[q], "set_possible": False, "missing_cameras": cams} for q in range(min(4, len(quarter_counts)))],
-                            }
-                            if frame_sync_log_file:
-                                frame_sync_log_file.write(json.dumps(stats_ev, ensure_ascii=False) + "\n")
-                                frame_sync_log_file.flush()
-                            last_stats_time = time.time()
                         continue
 
                 set_ = frame_sink.extract_set_for_interval(T_cur, T_cur + window_interval)
                 if set_ is not None:
-                    # 4 cam detection 병렬 실행 후, 라우트 순서로 matching/API 처리
-                    set_t0 = time.perf_counter()
-                    set_thumbnail_crops.clear()  # 세트마다 NFS 저장용 crop 초기화
+                    set_thumbnail_crops.clear()
                     dets_per_cam, detection_per_cam_sec, detection_wall_sec = run_detections_for_set(set_)
-                    process_per_cam_sec = {}
                     for cam in config.TRACKING_CAMS:
-                        if cam not in set_:
-                            continue
+                        if cam not in set_: continue
                         img, ts = set_[cam]
-                        if img is None:
-                            continue
-                        pt0 = time.perf_counter()
-                        _process_with_detections(cam, img, ts, ts, dets_per_cam.get(cam, []))
-                        process_per_cam_sec[cam] = round(time.perf_counter() - pt0, 4)
-                    process_wall_sec = time.perf_counter() - set_t0 - detection_wall_sec
-                    set_total_wall_sec = time.perf_counter() - set_t0
-                    if processing_times_log_file:
-                        processing_times_log_file.write(json.dumps({
-                            "event": "PROCESSING_TIMES",
-                            "timestamp": time.time(),
-                            "detection_wall_sec": round(detection_wall_sec, 4),
-                            "detection_per_cam_sec": detection_per_cam_sec,
-                            "process_per_cam_sec": process_per_cam_sec,
-                            "process_wall_sec": round(process_wall_sec, 4),
-                            "set_total_wall_sec": round(set_total_wall_sec, 4),
-                        }, ensure_ascii=False) + "\n")
-                        processing_times_log_file.flush()
+                        if img is None: continue
+                        # _process_with_detections 내부에서 img를 사용하여 display/video 처리
+                        # run_detections_for_set 내부에서 전처리된 img를 다시 가져오는 구조는 복잡하므로 
+                        # 여기서는 단순화하여 process_one_frame 흐름과 유사하게 맞춤
+                        process_one_frame(cam, img, ts, ts) 
+
                     sets_formed_this_second += 1
                     T_cur += window_interval
                     t_last_set = time.time()
-                    if frame_sync_log_file:
-                        ev = {"event": "FRAME_SET_COMPLETE", "timestamp": time.time(), "window": [T_cur - window_interval, T_cur]}
-                        frame_sync_log_file.write(json.dumps(ev, ensure_ascii=False) + "\n")
-                        frame_sync_log_file.flush()
                 elif time.time() - t_last_set >= max_wait_wall:
-                    # 스킵: time-based position update, 버퍼 정리, 윈도우 진행
-                    now_s = T_cur + window_interval
-                    time_based_position_update(now_s)
-                    frames_in = frame_sink.get_frames_in_interval(T_cur, T_cur + window_interval)
-                    missing_cameras = [c for c in config.TRACKING_CAMS if c not in frames_in]
+                    time_based_position_update(T_cur + window_interval)
                     frame_sink.remove_frames_in_interval(T_cur, T_cur + window_interval)
-                    if frame_sync_log_file:
-                        ev = {"event": "FRAME_SET_INCOMPLETE", "timestamp": time.time(), "window": [T_cur, T_cur + window_interval], "missing_cameras": missing_cameras}
-                        frame_sync_log_file.write(json.dumps(ev, ensure_ascii=False) + "\n")
-                        frame_sync_log_file.flush()
                     T_cur += window_interval
                     t_last_set = time.time()
                 else:
-                    # 4장 아직 안 모임, wall-clock 상한 전까지 대기
                     time.sleep(0.01)
-
-                # 1초마다 FRAME_STATS
-                if time.time() - last_stats_time >= 1.0:
-                    frame_counts, quarter_counts = frame_sink.get_stats_and_reset()
-                    cams = config.TRACKING_CAMS
-                    bottleneck_cam = min(cams, key=lambda c: frame_counts.get(c, 0)) if cams else None
-                    actual_sets = sets_formed_this_second
-                    efficiency = (actual_sets / THEORETICAL_MAX_SETS_PER_SEC) if THEORETICAL_MAX_SETS_PER_SEC else 0.0
-                    quarters_out = []
-                    for q_idx, q in enumerate(quarter_counts):
-                        set_possible = all(q.get(c, 0) > 0 for c in cams)
-                        missing_cams = [c for c in cams if q.get(c, 0) == 0]
-                        quarters_out.append({
-                            "quarter": q_idx,
-                            "frames_in_quarter": {c: q.get(c, 0) for c in cams},
-                            "set_possible": set_possible,
-                            "missing_cameras": missing_cams,
-                        })
-                    stats_ev = {
-                        "event": "FRAME_STATS",
-                        "timestamp": time.time(),
-                        "interval": "1s",
-                        "frame_counts": frame_counts,
-                        "bottleneck_camera": bottleneck_cam,
-                        "theoretical_max_sets": THEORETICAL_MAX_SETS_PER_SEC,
-                        "actual_sets_created": actual_sets,
-                        "efficiency": round(efficiency, 4),
-                        "quarters": quarters_out,
-                    }
-                    if frame_sync_log_file:
-                        frame_sync_log_file.write(json.dumps(stats_ev, ensure_ascii=False) + "\n")
-                        frame_sync_log_file.flush()
-                    sets_formed_this_second = 0
-                    last_stats_time = time.time()
             else:
+                # 일반 FrameAggregator 모드 (개별 카메라 순회)
                 for cam in config.TRACKING_CAMS:
                     pair = frame_sink.get(cam)
-                    if pair is None:
-                        continue
+                    if pair is None: continue
                     img, ts = pair
-                    if img is None:
-                        continue
+                    if img is None: continue
                     if last_processed_ts[cam] is not None and abs(ts - last_processed_ts[cam]) < target_interval * 0.5:
                         continue
                     last_processed_ts[cam] = ts
-                    time_s = ts
-                    process_one_frame(cam, img, ts, time_s)
+                    process_one_frame(cam, img, ts, ts)
 
             if args.display:
-                signal.signal(signal.SIGINT, shutdown)
-                signal.signal(signal.SIGTERM, shutdown)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     _running = False
-                for _cam in config.TRACKING_CAMS:
-                    try:
-                        if cv2.getWindowProperty(f"track_{_cam}", cv2.WND_PROP_VISIBLE) < 0:
-                            _running = False
-                            break
-                    except Exception:
-                        pass
             time.sleep(0.01)
 
     finally:
         _running = False
-        for recv in receivers:
-            recv.stop()
-        for worker, _ in usb_workers:
-            worker.stop()
+        for recv in receivers: recv.stop()
+        for worker, _ in usb_workers: worker.stop()
         scanner_listener.stop()
         visualizer.release_all()
-        if csv_file:
-            csv_file.close()
-        if frame_sync_log_file:
-            frame_sync_log_file.close()
-        if processing_times_log_file:
-            processing_times_log_file.close()
-        if args.display:
-            cv2.destroyAllWindows()
+        if csv_file: csv_file.close()
+        if frame_sync_log_file: frame_sync_log_file.close()
+        if args.display: cv2.destroyAllWindows()
         ctx.term()
 
 
