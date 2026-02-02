@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Multi-camera tracking (Async Mode): Process frames immediately as they arrive.
-Full Detection Visualization (Gray: Detected, Green: Matched, Red: Unmatched)
+Horizontal ROI Filtering + Real-time Status Visualization
 """
 import argparse
 import csv
@@ -48,7 +48,6 @@ def main():
 
     loader = ConfigLoader()
     loader.load()
-    
     frame_sink = FrameAggregator()
     
     global _running
@@ -129,7 +128,7 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    print("[main2] Async Mode Started (Total Detection Visualization)")
+    print("[main2] Async Mode Started (Horizontal ROI Filter + Visualization)")
 
     try:
         while _running:
@@ -161,48 +160,58 @@ def main():
                 target_h = int(h_orig * scale)
                 img = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
-                # 3. 해상도 및 비율 계산
+                # 3. 해상도 기반 비율 픽셀 계산 (가로/세로 전체 반영)
                 H, W = img.shape[:2]
                 cfg['roi_y'] = int(H * cfg.get('roi_y_rate', 0))
                 cfg['roi_margin'] = int(H * cfg.get('roi_margin_rate', 0))
+                
+                # 가로 제한 계산 (정중앙 기준 좌우 폭 설정)
                 x_center = int(W * cfg.get('roi_x_center_rate', 0.5))
                 x_half_range = int(W * cfg.get('roi_x_range_rate', 1.0) / 2)
                 cfg['roi_x_min'] = x_center - x_half_range
                 cfg['roi_x_max'] = x_center + x_half_range
+
                 cfg['dist_eps'] = int(H * cfg.get('dist_eps_rate', 0))
                 cfg['max_dy'] = int(H * cfg.get('max_dy_rate', 0))
                 if 'eol_y_rate' in cfg:
                     cfg['eol_y'] = int(H * cfg['eol_y_rate'])
                     cfg['eol_margin'] = int(H * cfg['eol_margin_rate'])
 
-                # 4. ROI 가이드라인 시각화
+                # 4. ROI 가이드라인 시각화 (display 옵션 시)
                 if args.display:
-                    cv2.line(img, (0, cfg['roi_y']), (W, cfg['roi_y']), (0, 255, 255), 2)
+                    # 가로 범위 외곽 어둡게 처리 (벨트 영역 강조)
                     overlay = img.copy()
-                    y_min, y_max = max(0, cfg['roi_y'] - cfg['roi_margin']), min(H, cfg['roi_y'] + cfg['roi_margin'])
-                    cv2.rectangle(overlay, (0, y_min), (W, y_max), (0, 0, 255), -1)
-                    cv2.addWeighted(overlay, 0.2, img, 0.8, 0, img)
+                    cv2.rectangle(overlay, (0, 0), (cfg['roi_x_min'], H), (0, 0, 0), -1)
+                    cv2.rectangle(overlay, (cfg['roi_x_max'], 0), (W, H), (0, 0, 0), -1)
+                    cv2.addWeighted(overlay, 0.4, img, 0.6, 0, img)
+                    
+                    # ROI 메인 라인 (가로 범위 내에만 노란색 선 표시)
+                    cv2.line(img, (cfg['roi_x_min'], cfg['roi_y']), (cfg['roi_x_max'], cfg['roi_y']), (0, 255, 255), 2)
                     if 'eol_y' in cfg:
-                        cv2.line(img, (0, cfg['eol_y']), (W, cfg['eol_y']), (255, 0, 255), 2)
+                        cv2.line(img, (cfg['roi_x_min'], cfg['eol_y']), (cfg['roi_x_max'], cfg['eol_y']), (255, 0, 255), 2)
 
-                # 5. Detection
+                # 5. Detection (YOLO 추론)
                 inf_t0 = time.perf_counter()
                 detections = detector.get_detections(img, cfg, cam)
-                detections = detector.get_detections(img, cfg, cam)
-                inf_dt = time.perf_counter() - inf_t0 # 소요 시간 계산
+                inf_dt = time.perf_counter() - inf_t0
                 
-                # [작동 확인용 로그] 실시간으로 추론 시간이 찍히면 모델이 돌고 있는 것입니다.
-                print(f"[{cam}] Inference active: {len(detections)} objects found | Time: {inf_dt:.4f}s")
+                # [디버깅 로그]
+                if len(detections) > 0:
+                    print(f"[{cam}] Found {len(detections)} boxes. Inf: {inf_dt:.3f}s")
                 
                 new_active = {}
                 for det in detections:
                     cx, cy = det["center"]
                     x1, y1, x2, y2 = det["box"]
 
-                    # 1) 기본 시각화 (YOLO가 찾은 모든 물체 - 회색)
-                    # ROI 통과 전에도 "찾았음"을 알 수 있게 함
-                    if args.display:
-                        cv2.rectangle(img, (x1, y1), (x2, y2), (180, 180, 180), 1)
+                    # ROI 가로 범위 체크 (중심점 기준)
+                    in_x_range = (cfg['roi_x_min'] <= cx <= cfg['roi_x_max'])
+                    
+                    # ROI 밖 물체는 시각화만 하고 로직은 무시
+                    if not in_x_range:
+                        if args.display:
+                            cv2.rectangle(img, (x1, y1), (x2, y2), (150, 150, 150), 1)
+                        continue
 
                     best_uid, best_score = None, 1e9
                     for uid, info in active_tracks[cam].items():
@@ -224,22 +233,12 @@ def main():
                         mid = matcher.try_match(match_cam, ts, det["width"], best_uid)
                         event_type = "MATCHED" if mid else "UNMATCHED"
 
-                    # 2) 상태별 강조 시각화 (매칭 여부에 따라 덮어쓰기)
+                    # 상태별 시각화 (매칭 성공: 초록, 실패: 빨강)
                     if args.display:
-                        # 매칭 성공(초록), 매칭 시도 구역인데 실패(빨강)
-                        if mid:
-                            color, thickness = (0, 255, 0), 2
-                            label = f"ID: {mid}"
-                        elif det.get("in_roi", False): # ROI 안에는 있는데 매칭 안 된 경우
-                            color, thickness = (0, 0, 255), 2
-                            label = "UNMATCHED"
-                        else:
-                            color, thickness = (180, 180, 180), 1 # ROI 밖: 기본 회색 유지
-                            label = "DETECTED"
-
-                        cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
-                        cv2.putText(img, label, (x1, y1 - 10), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                        color = (0, 255, 0) if mid else (0, 0, 255)
+                        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                        label = f"ID: {mid}" if mid else "UNMATCHED"
+                        cv2.putText(img, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
                     if mid:
                         new_active[best_uid] = {"last_pos": (cx, cy), "master_id": mid}
@@ -249,8 +248,7 @@ def main():
                         step_dist = round(rem_dist / 0.5) * 0.5
                         
                         if cam == "USB_LOCAL":
-                            h_in, w_in = img.shape[:2]
-                            crop = img[max(0, y1):min(h_in, y2), max(0, x1):min(w_in, x2)]
+                            crop = img[max(0, y1):min(H, y2), max(0, x1):min(W, x2)]
                             if crop.size > 0:
                                 save_thumbnail_to_nfs(mid, crop)
                         
@@ -262,7 +260,7 @@ def main():
                             "master_id": mid if mid else "", "event": event_type
                         })
 
-                # PENDING 및 Resolve 로직 (생략 없음)
+                # PENDING 처리
                 for old_uid, old_info in active_tracks[cam].items():
                     if old_uid not in new_active:
                         m_id = old_info["master_id"]
@@ -279,7 +277,7 @@ def main():
                 active_tracks[cam] = new_active
 
                 if args.display:
-                    cv2.putText(img, f"CAM: {cam} | {W}x{H} | TS: {ts:.2f}", (10, 30), 
+                    cv2.putText(img, f"CAM: {cam} | Resized: {W}x{H}", (10, 30), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                     cv2.imshow(f"track_{cam}", img)
                     if cv2.waitKey(1) & 0xFF == ord('q'): _running = False
