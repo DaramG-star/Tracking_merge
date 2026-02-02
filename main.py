@@ -145,9 +145,16 @@ def main():
     # 워밍업: YOLO11+ThreadPool 시 setup_model/fuse를 메인 스레드에서 먼저 실행해 fuse() Conv.bn 오류 방지
     if use_time_ordered:
         import numpy as np
-        _dummy = np.zeros((720, 1280, 3), dtype=np.uint8)
-        _cfg = config.CAM_SETTINGS.get("USB_LOCAL", {})
+        _dummy = np.zeros((640, 640, 3), dtype=np.uint8) # 640으로 워밍업
+        _cfg = config.CAM_SETTINGS.get("USB_LOCAL", {}).copy() # 원본 보존을 위해 copy
         if _cfg:
+            # 워밍업용 가상 해상도(1280) 기준으로 픽셀 값 계산
+            _h_warm = 1280
+            _cfg['roi_y'] = int(_h_warm * _cfg.get('roi_y_rate', 0.5))
+            _cfg['roi_margin'] = int(_h_warm * _cfg.get('roi_margin_rate', 0.1))
+            _cfg['dist_eps'] = int(_h_warm * _cfg.get('dist_eps_rate', 0.05))
+            _cfg['max_dy'] = int(_h_warm * _cfg.get('max_dy_rate', 0.1))
+            
             detector.get_detections(_dummy, _cfg, "USB_LOCAL")
     matcher = FIFOGlobalMatcher()
     visualizer = TrackingVisualizer(enabled=args.video)
