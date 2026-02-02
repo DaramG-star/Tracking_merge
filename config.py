@@ -94,7 +94,7 @@ CAM_SETTINGS = {
 }
 
 AVG_TRAVEL = {
-    ("Scanner", "USB_LOCAL"): 2.5,
+    ("Scanner", "USB_LOCAL"): 5.5,
     ("USB_LOCAL", "RPI_USB1"): 18.38,
     ("RPI_USB1", "RPI_USB2"): 9.8,
     ("RPI_USB2", "RPI_USB3"): 9.1,
@@ -102,7 +102,7 @@ AVG_TRAVEL = {
 }
 
 TIME_MARGIN = {
-    ("Scanner", "USB_LOCAL"): 3.0,
+    ("Scanner", "USB_LOCAL"): 4.5,
     ("USB_LOCAL", "RPI_USB1"): 2.5,
     ("RPI_USB1", "RPI_USB2"): 2.0,
     ("RPI_USB2", "RPI_USB3"): 2.0,

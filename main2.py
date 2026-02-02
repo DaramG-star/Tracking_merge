@@ -242,6 +242,10 @@ def main():
                         
                         match_result = matcher.try_match(match_cam, ts_today, det["width"], best_uid)
                         mid = match_result.get("mid")
+                        reason = match_result.get("reason") # 리즌 값 가져오기
+
+                        if not mid:
+                            print(f"❌ 매칭 실패: UID={best_uid}, 사유={reason}") # 터미널에 실패 사유 출력
                         event_type = "MATCHED" if mid else "UNMATCHED"
                         
                         if args.csv and csv_writer:
@@ -303,7 +307,7 @@ def main():
                             if crop.size > 0:
                                 save_thumbnail_to_nfs(mid, crop)
                         
-                        api_helper.api_update_position(mid, step_dist, thumbnail_image=None)
+                        # api_helper.api_update_position(mid, step_dist, thumbnail_image=None)
 
                     # CSV 로그 (모든 감지 건에 대해 기록)
                     if args.csv and csv_writer and best_uid:
