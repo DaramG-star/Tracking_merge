@@ -48,7 +48,7 @@ STREAM_USE_LZ4 = True
 CAM_SETTINGS = {
     "Scanner": {"dist": -2.3},
     "USB_LOCAL": {
-        "rotate": 180,
+        "rotate": 90,
         "roi_y": 750, "roi_margin": 100,
         "dist_eps": 60, "max_dy": 120,
         "forward_sign": -1,
