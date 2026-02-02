@@ -283,11 +283,12 @@ def main():
                 new_active[best_uid] = {"last_pos": (cx, cy), "master_id": mid}
                 # 썸네일: TRACKING/MATCHED 시 crop → NFS에 반드시 저장 (/mnt/thumbnails/{uid}.jpg). 100 서버 웹이 /thumbnails/{uid}.jpg 로 제공.
                 if mid and event_type in ("TRACKING", "MATCHED"):
-                    h, w = img.shape[:2]
-                    crop = img[max(0, y1):min(h, y2), max(0, x1):min(w, x2)]
-                    if crop.size > 0:
-                        save_thumbnail_to_nfs(mid, crop)
-                        set_thumbnail_crops[mid] = crop  # position API 호출 시에도 NFS 저장용으로 전달
+                    if cam == "USB_LOCAL":
+                        h, w = img.shape[:2]
+                        crop = img[max(0, y1):min(h, y2), max(0, x1):min(w, x2)]
+                        if crop.size > 0:
+                            save_thumbnail_to_nfs(mid, crop)
+                            set_thumbnail_crops[mid] = crop  # position API 호출 시에도 NFS 저장용으로 전달
 
         # Pending: mark as PENDING if no longer in frame
         for old_uid, old_info in active_tracks[cam].items():
